@@ -830,4 +830,301 @@ struct BusSystem
         logger.print_recent(5);
         cout << "==============================\n";
     }
-};
+};//Demo dataset builder
+void build_sample_data(BusSystem &sys)
+{
+    sys.add_stop_with_location("A", 0, 0);
+    sys.add_stop_with_location("B", 2, 1);
+    sys.add_stop_with_location("C", 4, 0.5);
+    sys.add_stop_with_location("D", 3, -1.5);
+    sys.add_stop_with_location("E", 1, -2);
+    sys.add_stop_with_location("F", 5, -1);
+    sys.add_stop_with_location("G", 6, 1.5);
+
+    sys.add_route_by_names("A", "B", 6); // 6 minutes
+    sys.add_route_by_names("B", "C", 5);
+    sys.add_route_by_names("C", "F", 8);
+    sys.add_route_by_names("A", "E", 7);
+    sys.add_route_by_names("E", "D", 4);
+    sys.add_route_by_names("D", "C", 6);
+    sys.add_route_by_names("F", "G", 9);
+    sys.add_route_by_names("C", "G", 7);
+
+    sys.add_bus("BUS101", vector<string>{"A", "B", "C", "F", "G"}, 40.0);
+    sys.add_bus("BUS202", vector<string>{"E", "D", "C", "B", "A"}, 35.0);
+    sys.add_bus("BUS303", vector<string>{"G", "C", "D", "E", "A"}, 45.0);
+}
+
+//CLI
+void show_menu()
+{
+    cout << "\n=== Bus Tracking System CLI ===\n";
+    cout << "1. Show summary\n";
+    cout << "2. List stops\n";
+    cout << "3. Add stop\n";
+    cout << "4. Add route (edge)\n";
+    cout << "5. List buses\n";
+    cout << "6. Add bus\n";
+    cout << "7. Move all buses one step (simulate)\n";
+    cout << "8. Move single bus one step\n";
+    cout << "9. ETA between stops (Dijkstra)\n";
+    cout << "10. ETA for bus -> stop\n";
+    cout << "11. Shortest path (Dijkstra) show route\n";
+    cout << "12. A* path (uses coordinates)\n";
+    cout << "13. MST (Prim) suggestion\n";
+    cout << "14. Suggest stops by prefix (Trie)\n";
+    cout << "15. Save graph & buses to files\n";
+    cout << "16. Load graph & buses from files\n";
+    cout << "17. Show movement history\n";
+    cout << "18. Show recent logger messages\n";
+    cout << "19. Exit\n";
+    cout << "Enter choice: " << endl;
+}
+
+void cli_loop(BusSystem &sys)
+{
+    while (true)
+    {
+        show_menu();
+        int ch;
+        if (!(cin >> ch))
+        {
+            cin.clear();
+            string dummy;
+            getline(cin, dummy);
+            cout << "Invalid input. Try again.\n";
+            continue;
+        }
+        if (ch == 1)
+        {
+            sys.print_summary();
+        }
+        else if (ch == 2)
+        {
+            cout << "Stops: \n";
+            for (StopID i = 0; i < (StopID)sys.g.size(); ++i)
+            {
+                string s = sys.g.get_name(i);
+                Point loc = sys.g.get_loc(i);
+                cout << i << " : " << s << " (" << loc.x << "," << loc.y << ")\n";
+            }
+        }
+        else if (ch == 3)
+        {
+            string name;
+            double x, y;
+            cout << "Enter stop name: ";
+            cin >> ws;
+            getline(cin, name);
+            cout << "Enter x y coords (double): ";
+            cin >> x >> y;
+            sys.add_stop_with_location(name, x, y);
+            cout << "Added.\n";
+        }
+        else if (ch == 4)
+        {
+            string a, b;
+            double minutes;
+            cout << "Enter stopA name: ";
+            cin >> ws;
+            getline(cin, a);
+            cout << "Enter stopB name: ";
+            cin >> ws;
+            getline(cin, b);
+            cout << "Enter travel time in minutes (double): ";
+            cin >> minutes;
+            sys.add_route_by_names(a, b, minutes);
+            cout << "Edge added.\n";
+        }
+        else if (ch == 5)
+        {
+            cout << "Buses:\n";
+            for (auto it = sys.buses.begin(); it != sys.buses.end(); ++it)
+            {
+                cout << it->second.info(sys.g) << "\n";
+            }
+        }
+        else if (ch == 6)
+        {
+            string idline;
+            cout << "Enter bus id: ";
+            cin >> ws;
+            getline(cin, idline);
+            string routeStr;
+            cout << "Enter comma-separated stops (names): ";
+            cin >> ws;
+            getline(cin, routeStr);
+            double sp;
+            cout << "Enter speed (km/h) [not used if edges are minutes, but recorded]: ";
+            cin >> sp;
+            vector<string> parts;
+            string cur;
+            stringstream ss(routeStr);
+            while (getline(ss, cur, ','))
+                parts.push_back(trim(cur));
+            sys.add_bus(idline, parts, sp);
+            cout << "Bus added.\n";
+        }
+        else if (ch == 7)
+        {
+            cout << "Moving all buses one step...\n";
+            sys.move_all_buses_one_step();
+            cout << "Done.\n";
+        }
+        else if (ch == 8)
+        {
+            string bid;
+            cout << "Enter bus id: ";
+            cin >> ws;
+            getline(cin, bid);
+            bool ok = sys.move_bus_one_step(bid);
+            cout << (ok ? "Bus moved." : "Bus did not move (maybe at end or id wrong).") << "\n";
+        }
+        else if (ch == 9)
+        {
+            string a, b;
+            cout << "Enter source stop: ";
+            cin >> ws;
+            getline(cin, a);
+            cout << "Enter destination stop: ";
+            cin >> ws;
+            getline(cin, b);
+            double eta = sys.estimate_eta_between(a, b);
+            if (eta < 0)
+                cout << "No path or stops not present.\n";
+            else
+                cout << "ETA (minutes): " << eta << "\n";
+        }
+        else if (ch == 10)
+        {
+            string bid, target;
+            cout << "Enter bus id: ";
+            cin >> ws;
+            getline(cin, bid);
+            cout << "Enter target stop name: ";
+            cin >> ws;
+            getline(cin, target);
+            double eta = sys.estimate_eta_for_bus(bid, target);
+            if (eta < 0)
+                cout << "Could not compute ETA.\n";
+            else
+                cout << "ETA from current position (minutes): " << eta << "\n";
+        }
+        else if (ch == 11)
+        {
+            string a, b;
+            cout << "Enter source stop: ";
+            cin >> ws;
+            getline(cin, a);
+            cout << "Enter destination stop: ";
+            cin >> ws;
+            getline(cin, b);
+            pair<double, vector<string>> res = sys.shortest_path_names(a, b);
+            double cost = res.first;
+            vector<string> path = res.second;
+            if (cost < 0)
+                cout << "No path.\n";
+            else
+            {
+                cout << "Cost (minutes): " << cost << "\nPath: ";
+                for (size_t i = 0; i < path.size(); ++i)
+                {
+                    cout << path[i] << (i + 1 < path.size() ? " -> " : "\n");
+                }
+            }
+        }
+        else if (ch == 12)
+        {
+            string a, b;
+            cout << "Enter source stop: ";
+            cin >> ws;
+            getline(cin, a);
+            cout << "Enter destination stop: ";
+            cin >> ws;
+            getline(cin, b);
+            pair<double, vector<string>> res = sys.astar_names(a, b);
+            double cost = res.first;
+            vector<string> path = res.second;
+            if (cost < 0)
+                cout << "A* failed to find path.\n";
+            else
+            {
+                cout << "A* cost (minutes approximated): " << cost << "\nPath: ";
+                for (size_t i = 0; i < path.size(); ++i)
+                {
+                    cout << path[i] << (i + 1 < path.size() ? " -> " : "\n");
+                }
+            }
+        }
+        else if (ch == 13)
+        {
+            pair<double, vector<pair<string, string>>> res = sys.mst_names();
+            double total = res.first;
+            vector<pair<string, string>> edges = res.second;
+            cout << "MST total weight (minutes): " << total << "\nEdges:\n";
+            for (size_t i = 0; i < edges.size(); ++i)
+                cout << edges[i].first << " - " << edges[i].second << "\n";
+            cout << "Use this to plan minimal-cost physical cable/road layout (demo purpose).\n";
+        }
+        else if (ch == 14)
+        {
+            string pref;
+            cout << "Enter prefix: ";
+            cin >> ws;
+            getline(cin, pref);
+            vector<string> sug = sys.suggest_stops(pref);
+            cout << "Suggestions:\n";
+            for (size_t i = 0; i < sug.size(); ++i)
+                cout << "  " << sug[i] << "\n";
+        }
+        else if (ch == 15)
+        {
+            string sf = "data/stops.txt", ef = "data/edges.txt", bf = "data/buses.txt";
+            bool ok1 = sys.g.save_to(sf, ef);
+            bool ok2 = sys.save_buses(bf);
+            cout << "Saved graph: " << ok1 << " , buses: " << ok2 << "\n";
+        }
+        else if (ch == 16)
+        {
+            string sf = "data/stops.txt", ef = "data/edges.txt", bf = "data/buses.txt";
+            bool ok1 = sys.g.load_from(sf, ef);
+            bool ok2 = sys.load_buses(bf);
+            cout << "Loaded graph: " << ok1 << " , buses: " << ok2 << "\n";
+        }
+        else if (ch == 17)
+        {
+            sys.print_history(30);
+        }
+        else if (ch == 18)
+        {
+            logger.print_recent(20);
+        }
+        else if (ch == 19)
+        {
+            cout << "Exiting. Goodbye!\n";
+            break;
+        }
+        else
+        {
+            cout << "Unknown choice.\n";
+        }
+    }
+}
+
+// Main
+int main()
+{
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    BusSystem system;
+    build_sample_data(system);
+
+    cout << "Bus Tracking System (C++) - Demo backend\n";
+    cout << "Sample data loaded. Use CLI to interact.\n";
+    cout << "Note: edges' weights are treated as minutes for ETA calculations.\n";
+
+    cli_loop(system);
+
+    return 0;
+}
