@@ -306,3 +306,40 @@ struct Graph
         return true;
     }
 };
+
+// Dijkstra
+pair<vector<double>, vector<int>> dijkstra(const Graph &g, StopID src)
+{
+    size_t n = g.size();
+    const double INF = 1e18;
+    vector<double> dist(n, INF);
+    vector<int> prev(n, -1);
+    typedef pair<double, StopID> PDI;
+    priority_queue<PDI, vector<PDI>, greater<PDI>> pq;
+    if (src < 0 || src >= (StopID)n)
+        return make_pair(dist, prev);
+    dist[src] = 0;
+    pq.push(make_pair(0.0, src));
+    while (!pq.empty())
+    {
+        PDI top = pq.top();
+        pq.pop();
+        double d = top.first;
+        StopID u = top.second;
+        if (d > dist[u])
+            continue;
+        vector<pair<StopID, double>> nbrs = g.neighbors(u);
+        for (size_t i = 0; i < nbrs.size(); ++i)
+        {
+            StopID v = nbrs[i].first;
+            double w = nbrs[i].second;
+            if (dist[v] > dist[u] + w)
+            {
+                dist[v] = dist[u] + w;
+                prev[v] = (int)u;
+                pq.push(make_pair(dist[v], v));
+            }
+        }
+    }
+    return make_pair(dist, prev);
+}
