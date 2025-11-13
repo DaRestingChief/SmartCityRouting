@@ -555,3 +555,279 @@ struct Bus
         return bus;
     }
 };
+
+
+// Bus system
+struct BusSystem
+{
+    Graph g;
+    unordered_map<string, Bus> buses;
+    unordered_map<StopID, vector<string>> stopToBuses;
+    queue<string> history; // Event log of bus movements
+    size_t maxHistory;
+    Trie trie; // Prefix search for stop names
+
+    BusSystem() : maxHistory(1000) {}
+
+    void rebuild_stop_index()
+    {
+        stopToBuses.clear();
+        for (auto it = buses.begin(); it != buses.end(); ++it)
+        {
+            const Bus &b = it->second;
+            if (b.route.empty())
+                continue;
+            StopID sid = b.current_stop();
+            if (sid >= 0)
+                stopToBuses[sid].push_back(it->first);
+        }
+    }
+
+    bool add_stop_with_location(const string &name, double x, double y)
+    {
+        StopID id = g.add_stop(name, x, y);
+        trie.insert(name);
+        return id >= 0;
+    }
+
+    bool add_route_by_names(const string &a, const string &b, double minutes)
+    {
+        g.add_edge(a, b, minutes, true);
+        trie.insert(trim(a));
+        trie.insert(trim(b));
+        return true;
+    }
+
+    bool add_bus(const string &busId, const vector<string> &routeNames, double speed = 40.0)
+    {
+        vector<StopID> r;
+        for (size_t i = 0; i < routeNames.size(); ++i)
+        {
+            const string &nm = routeNames[i];
+            StopID id = g.get_id(nm);
+            if (id == (StopID)-1)
+            {
+                id = g.add_stop(nm);
+                trie.insert(nm);
+            }
+            r.push_back(id);
+        }
+        Bus bus(busId, r, speed);
+        buses[busId] = bus;
+        rebuild_stop_index();
+        logger.log(string("Added bus: ") + busId + " with " + to_string(r.size()) + " stops");
+        return true;
+    }
+
+    bool move_bus_one_step(const string &busId)
+    {
+        if (!buses.count(busId))
+            return false;
+        Bus &bus = buses[busId];
+        StopID prev = bus.current_stop();
+        bool moved = bus.move_next();
+        StopID curr = bus.current_stop();
+        string entry = string("[") + current_time_str() + "] " + busId + " : " + g.get_name(prev) + " -> " + g.get_name(curr);
+        push_history(entry);
+        logger.log(entry);
+        rebuild_stop_index();
+        return moved;
+    }
+
+    void move_all_buses_one_step()
+    {
+        for (auto it = buses.begin(); it != buses.end(); ++it)
+        {
+            Bus &bus = it->second;
+            StopID prev = bus.current_stop();
+            if (bus.active)
+            {
+                bool moved = bus.move_next();
+                StopID curr = bus.current_stop();
+                string entry = string("[") + current_time_str() + "] " + bus.busId + " : " + g.get_name(prev) + " -> " + g.get_name(curr);
+                push_history(entry);
+                logger.log(entry);
+            }
+        }
+        rebuild_stop_index();
+    }
+
+    vector<string> buses_at_stop(const string &stopName)
+    {
+        StopID id = g.get_id(stopName);
+        vector<string> out;
+        if (id == (StopID)-1)
+            return out;
+        if (stopToBuses.count(id))
+            out = stopToBuses[id];
+        return out;
+    }
+
+    // ETA between current bus location and some target stop: use Dijkstra from current stop
+    double estimate_eta_for_bus(const string &busId, const string &targetStopName)
+    {
+        if (!buses.count(busId))
+            return -1.0;
+        StopID target = g.get_id(targetStopName);
+        if (target == (StopID)-1)
+            return -1.0;
+        StopID src = buses[busId].current_stop();
+        if (src == (StopID)-1)
+            return -1.0;
+        pair<vector<double>, vector<int>> res = dijkstra(g, src);
+        vector<double> dist = res.first;
+        if (dist[target] >= 1e17)
+            return -1.0;
+        return dist[target];
+    }
+
+    // estimate ETA between any two stops (names)
+    double estimate_eta_between(const string &a, const string &b)
+    {
+        StopID sa = g.get_id(a);
+        StopID sb = g.get_id(b);
+        if (sa == (StopID)-1 || sb == (StopID)-1)
+            return -1.0;
+        pair<vector<double>, vector<int>> res = dijkstra(g, sa);
+        vector<double> dist = res.first;
+        if (dist[sb] >= 1e17)
+            return -1.0;
+        return dist[sb];
+    }
+
+    // find shortest path (Dijkstra) with names returned
+    pair<double, vector<string>> shortest_path_names(const string &a, const string &b)
+    {
+        vector<string> emptyRes;
+        StopID sa = g.get_id(a);
+        StopID sb = g.get_id(b);
+        if (sa == (StopID)-1 || sb == (StopID)-1)
+            return make_pair(-1.0, emptyRes);
+        pair<vector<double>, vector<int>> res = dijkstra(g, sa);
+        vector<double> dist = res.first;
+        vector<int> prev = res.second;
+        if (dist[sb] > 1e17)
+            return make_pair(-1.0, emptyRes);
+        vector<StopID> path = reconstruct_path(prev, sb);
+        vector<string> names;
+        for (size_t i = 0; i < path.size(); ++i)
+            names.push_back(g.get_name(path[i]));
+        return make_pair(dist[sb], names);
+    }
+
+    // A* path (uses locations)
+    pair<double, vector<string>> astar_names(const string &a, const string &b)
+    {
+        vector<string> emptyRes;
+        StopID sa = g.get_id(a), sb = g.get_id(b);
+        if (sa == (StopID)-1 || sb == (StopID)-1)
+            return make_pair(-1.0, emptyRes);
+        AStarResult res = astar(g, sa, sb);
+        if (!res.found)
+            return make_pair(-1.0, emptyRes);
+        vector<string> names;
+        for (size_t i = 0; i < res.path.size(); ++i)
+            names.push_back(g.get_name(res.path[i]));
+        return make_pair(res.cost, names);
+    }
+
+    // MST
+    pair<double, vector<pair<string, string>>> mst_names()
+    {
+        pair<double, vector<pair<StopID, StopID>>> p = prim_mst(g);
+        double total = p.first;
+        vector<pair<StopID, StopID>> edges = p.second;
+        vector<pair<string, string>> out;
+        for (size_t i = 0; i < edges.size(); ++i)
+        {
+            out.push_back(make_pair(g.get_name(edges[i].first), g.get_name(edges[i].second)));
+        }
+        return make_pair(total, out);
+    }
+
+    // persistence for buses
+    bool save_buses(const string &file)
+    {
+        ofstream ofs(file.c_str());
+        if (!ofs)
+            return false;
+        for (auto it = buses.begin(); it != buses.end(); ++it)
+        {
+            ofs << it->second.serialize() << "\n";
+        }
+        ofs.close();
+        logger.log(string("Saved buses to ") + file);
+        return true;
+    }
+
+    bool load_buses(const string &file)
+    {
+        ifstream ifs(file.c_str());
+        if (!ifs)
+            return false;
+        buses.clear();
+        string line;
+        while (getline(ifs, line))
+        {
+            if (trim(line).empty())
+                continue;
+            Bus b = Bus::deserialize(line);
+            if (!b.busId.empty())
+                buses[b.busId] = b;
+        }
+        ifs.close();
+        rebuild_stop_index();
+        logger.log(string("Loaded buses from ") + file);
+        return true;
+    }
+
+    // basic history push (bounded)
+    void push_history(const string &s)
+    {
+        history.push(s);
+        if (history.size() > maxHistory)
+            history.pop();
+    }
+
+    void print_history(size_t n = 20)
+    {
+        vector<string> items;
+        queue<string> tmp = history;
+        while (!tmp.empty())
+        {
+            items.push_back(tmp.front());
+            tmp.pop();
+        }
+        cout << "---- Movement History (recent first) ----\n";
+        for (int i = (int)items.size() - 1, c = 0; i >= 0 && c < (int)n; --i, ++c)
+        {
+            cout << items[i] << "\n";
+        }
+        cout << "-----------------------------------------\n";
+    }
+
+    string current_time_str() const
+    {
+        time_t t = time(nullptr);
+        char buf[64];
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
+        return string(buf);
+    }
+
+    // Suggest stops by prefix
+    vector<string> suggest_stops(const string &prefix)
+    {
+        return trie.suggest(prefix);
+    }
+
+    // display system summary
+    void print_summary()
+    {
+        cout << "===== Bus System Summary =====\n";
+        cout << "Stops : " << g.size() << "\n";
+        cout << "Buses : " << buses.size() << "\n";
+        cout << "Recent Logs (top 5):\n";
+        logger.print_recent(5);
+        cout << "==============================\n";
+    }
+};
