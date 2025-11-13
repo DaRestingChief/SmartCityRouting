@@ -410,3 +410,148 @@ AStarResult astar(const Graph &g, StopID src, StopID dest, double avgSpeedKmPerH
     }
     return AStarResult{false, vector<StopID>(), 0.0};
 }
+// Prim's MST
+pair<double, vector<pair<StopID, StopID>>> prim_mst(const Graph &g)
+{
+    size_t n = g.size();
+    if (n == 0)
+        return make_pair(0.0, vector<pair<StopID, StopID>>());
+    vector<bool> inMST(n, false);
+    vector<double> key(n, 1e18);
+    vector<int> parent(n, -1);
+    typedef pair<double, StopID> P;
+    priority_queue<P, vector<P>, greater<P>> pq;
+    key[0] = 0;
+    pq.push(make_pair(0.0, 0));
+    while (!pq.empty())
+    {
+        P top = pq.top();
+        pq.pop();
+        double k = top.first;
+        StopID u = top.second;
+        if (inMST[u])
+            continue;
+        inMST[u] = true;
+        vector<pair<StopID, double>> nbrs = g.neighbors(u);
+        for (size_t i = 0; i < nbrs.size(); ++i)
+        {
+            StopID v = nbrs[i].first;
+            double w = nbrs[i].second;
+            if (!inMST[v] && key[v] > w)
+            {
+                key[v] = w;
+                parent[v] = (int)u;
+                pq.push(make_pair(key[v], v));
+            }
+        }
+    }
+    double total = 0;
+    vector<pair<StopID, StopID>> edges;
+    for (size_t v = 1; v < n; ++v)
+    {
+        if (parent[v] != -1)
+        {
+            edges.push_back(make_pair((StopID)parent[v], (StopID)v));
+            // find weight
+            vector<pair<StopID, double>> nbrs = g.neighbors(parent[v]);
+            for (size_t i = 0; i < nbrs.size(); ++i)
+            {
+                if (nbrs[i].first == (StopID)v)
+                {
+                    total += nbrs[i].second;
+                    break;
+                }
+            }
+        }
+    }
+    return make_pair(total, edges);
+}
+
+// Bus entity with route and position tracking
+struct Bus
+{
+    string busId;
+    vector<StopID> route; // Ordered sequence of stops
+    int currentIndex;     // Current position in route
+    double speed;         // Speed in km/h (informational)
+    bool active;          // Whether bus is currently running
+    Bus() : busId(""), currentIndex(0), speed(40.0), active(false) {}
+    Bus(const string &id, const vector<StopID> &r, double sp = 40.0) : busId(id), route(r), currentIndex(0), speed(sp), active(true) {}
+    StopID current_stop() const
+    {
+        if (route.empty())
+            return -1;
+        int idx = currentIndex;
+        if (idx < 0)
+            idx = 0;
+        if (idx >= (int)route.size())
+            idx = (int)route.size() - 1;
+        return route[idx];
+    }
+    StopID next_stop() const
+    {
+        if (route.empty())
+            return -1;
+        if (currentIndex + 1 >= (int)route.size())
+            return route.back();
+        return route[currentIndex + 1];
+    }
+    bool move_next()
+    {
+        if (!active)
+            return false;
+        if (route.empty())
+            return false;
+        if (currentIndex + 1 < (int)route.size())
+        {
+            currentIndex++;
+            return true;
+        }
+        else
+        {
+            active = false;
+            return false;
+        }
+    }
+    string info(const Graph &g) const
+    {
+        stringstream ss;
+        ss << "[" << busId << "] ";
+        ss << "At: ";
+        StopID cs = current_stop();
+        if (cs >= 0)
+            ss << g.get_name(cs);
+        else
+            ss << "N/A";
+        ss << " (idx " << currentIndex << "/" << (route.empty() ? 0 : route.size() - 1) << ")";
+        ss << (active ? " RUNNING" : " STOPPED");
+        return ss.str();
+    }
+    string serialize() const
+    {
+        stringstream ss;
+        ss << busId << "|" << speed << "|" << currentIndex;
+        for (size_t i = 0; i < route.size(); ++i)
+            ss << "|" << route[i];
+        return ss.str();
+    }
+    static Bus deserialize(const string &line)
+    {
+        vector<string> parts;
+        string cur;
+        stringstream ss(line);
+        while (getline(ss, cur, '|'))
+            parts.push_back(cur);
+        Bus bus;
+        if (parts.size() >= 3)
+        {
+            bus.busId = parts[0];
+            bus.speed = atof(parts[1].c_str());
+            bus.currentIndex = atoi(parts[2].c_str());
+            for (size_t i = 3; i < parts.size(); ++i)
+                bus.route.push_back((StopID)atoi(parts[i].c_str()));
+            bus.active = true;
+        }
+        return bus;
+    }
+};
