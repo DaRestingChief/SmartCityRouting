@@ -343,3 +343,70 @@ pair<vector<double>, vector<int>> dijkstra(const Graph &g, StopID src)
     }
     return make_pair(dist, prev);
 }
+
+// Build path from source to target using parent/predecessor array
+vector<StopID> reconstruct_path(const vector<int> &prev, StopID target)
+{
+    vector<StopID> path;
+    for (int at = (int)target; at != -1; at = prev[at])
+        path.push_back(at);
+    reverse(path.begin(), path.end());
+    return path;
+}
+
+// A* pathfinding result - includes success status, path, and estimated cost
+struct AStarResult
+{
+    bool found;          // Whether a path was found
+    vector<StopID> path; // Sequence of stops in the path
+    double cost;         // Total travel time estimate
+};
+// A* pathfinding algorithm using geographic heuristic (Euclidean distance)
+AStarResult astar(const Graph &g, StopID src, StopID dest, double avgSpeedKmPerHr = 40.0, double kmToMinFactor = 1.0)
+{
+    size_t n = g.size();
+    if (src < 0 || dest < 0 || src >= (StopID)n || dest >= (StopID)n)
+        return AStarResult{false, vector<StopID>(), 0.0};
+    vector<double> gscore(n, 1e18), fscore(n, 1e18);
+    vector<int> cameFrom(n, -1);
+    // Heuristic: estimate remaining time based on straight-line distance
+    auto heuristic = [&](StopID a, StopID b) -> double
+    {
+        Point pa = g.get_loc(a), pb = g.get_loc(b);
+        double km = euclidean(pa, pb);
+        double hours = (avgSpeedKmPerHr <= 0) ? 0 : (km / avgSpeedKmPerHr);
+        return hours * 60.0; // Convert to minutes
+    };
+    typedef pair<double, StopID> P;
+    priority_queue<P, vector<P>, greater<P>> openSet;
+    gscore[src] = 0;
+    fscore[src] = heuristic(src, dest);
+    openSet.push(make_pair(fscore[src], src));
+    while (!openSet.empty())
+    {
+        P top = openSet.top();
+        openSet.pop();
+        double curf = top.first;
+        StopID cur = top.second;
+        if (cur == dest)
+        {
+            vector<StopID> path = reconstruct_path(cameFrom, dest);
+            return AStarResult{true, path, gscore[dest]};
+        }
+        vector<pair<StopID, double>> nbrs = g.neighbors(cur);
+        for (size_t i = 0; i < nbrs.size(); ++i)
+        {
+            StopID v = nbrs[i].first;
+            double w = nbrs[i].second;
+            double tentative = gscore[cur] + w;
+            if (tentative < gscore[v])
+            {
+                cameFrom[v] = (int)cur;
+                gscore[v] = tentative;
+                fscore[v] = tentative + heuristic(v, dest);
+                openSet.push(make_pair(fscore[v], v));
+            }
+        }
+    }
+    return AStarResult{false, vector<StopID>(), 0.0};
+}
