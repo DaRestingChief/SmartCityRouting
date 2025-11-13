@@ -91,3 +91,117 @@ struct Trie
         return out;
     }
 };
+struct Stop
+{
+    StopID id;
+    string name;
+    Point loc;
+};
+
+struct Edge
+{
+    StopID to;
+    double weight;
+};
+
+struct Graph
+{
+    vector<Stop> stops;
+    unordered_map<string, StopID> nameToId;
+    vector<vector<Edge>> adj;
+
+    StopID add_stop(const string &name, double x = 0.0, double y = 0.0)
+    {
+        string tn = trim(name);
+        if (nameToId.count(tn)) return nameToId[tn];
+        StopID id = stops.size();
+        stops.push_back({id, tn, {x, y}});
+        nameToId[tn] = id;
+        adj.emplace_back();
+        logger.log("Added stop: " + tn);
+        return id;
+    }
+
+    bool has_stop(const string &name)
+    {
+        return nameToId.count(trim(name));
+    }
+
+    StopID get_id(const string &name)
+    {
+        string tn = trim(name);
+        if (!nameToId.count(tn)) return -1;
+        return nameToId[tn];
+    }
+
+    string get_name(StopID id)
+    {
+        if (id < 0 || id >= (StopID)stops.size()) return "";
+        return stops[id].name;
+    }
+
+    void add_edge(const string &a, const string &b, double w, bool bidir = true)
+    {
+        StopID u = add_stop(a);
+        StopID v = add_stop(b);
+        adj[u].push_back({v, w});
+        if (bidir) adj[v].push_back({u, w});
+        logger.log("Added edge: " + a + " <-> " + b);
+    }
+
+    vector<pair<StopID, double>> neighbors(StopID u)
+    {
+        vector<pair<StopID, double>> out;
+        for (auto &e : adj[u]) out.push_back({e.to, e.weight});
+        return out;
+    }
+
+    size_t size()
+    {
+        return stops.size();
+    }
+
+    bool save_to(const string &sf, const string &ef)
+    {
+        ofstream s(sf), e(ef);
+        if (!s || !e) return false;
+        for (auto &st : stops) s << st.id << "\t" << st.name << "\t" << st.loc.x << "\t" << st.loc.y << "\n";
+        for (size_t i = 0; i < adj.size(); ++i)
+        {
+            for (auto &x : adj[i]) e << i << "\t" << x.to << "\t" << x.weight << "\n";
+        }
+        logger.log("Saved graph data.");
+        return true;
+    }
+
+    bool load_from(const string &sf, const string &ef)
+    {
+        ifstream s(sf), e(ef);
+        if (!s || !e) return false;
+        stops.clear(); nameToId.clear(); adj.clear();
+
+        string line;
+        while (getline(s, line))
+        {
+            if (trim(line).empty()) continue;
+            stringstream ss(line);
+            int id; string name; double x, y;
+            ss >> id >> name >> x >> y;
+            if ((int)stops.size() <= id) stops.resize(id + 1);
+            stops[id] = {id, name, {x, y}};
+            nameToId[name] = id;
+            adj.resize(stops.size());
+        }
+        while (getline(e, line))
+        {
+            if (trim(line).empty()) continue;
+            stringstream ss(line);
+            int u, v; double w;
+            ss >> u >> v >> w;
+            adj[u].push_back({v, w});
+        }
+        logger.log("Loaded graph data.");
+        return true;
+    }
+};
+
